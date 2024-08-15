@@ -45,6 +45,10 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
     assert isinstance(pdf_output_dir, str) or pdf_output_dir is None, "pdf_output_dir must be a string or None."
     assert isinstance(persist_dir, str) or persist_dir is None, "persist_dir must be a string or None."
     
+    if pdf_output_dir:
+        warning_message = "WARNING: Downloading PDFs may be subject to copyright restrictions. Ensure you have the right to download and use the content."
+        print(warning_message)
+
     # Initialize variables used for the API request and function
     base_url = "https://api.openalex.org/works/"
     params = {
