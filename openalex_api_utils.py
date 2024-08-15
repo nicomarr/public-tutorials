@@ -680,6 +680,10 @@ def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, 
     assert isinstance(show_progress, bool), "show_progress must be a boolean value."
     assert isinstance(verbose, bool), "verbose must be a boolean value."
 
+    if pdf_output_dir:
+        warning_message = "WARNING: Downloading PDFs may be subject to copyright restrictions. Ensure you have the right to download and use the content."
+        print(warning_message)
+        
     # Initialize variables
     citations = []  # List to store the works that cite the retrieved works.
     citations_metadata = []  # List to store the metadata of the cited by works.
