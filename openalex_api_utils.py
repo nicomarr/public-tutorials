@@ -4,100 +4,131 @@ import re
 import json
 import time
 from datetime import datetime, timedelta
-import requests
+import requests 
 from typing import Dict, Any, List, Optional
 from tqdm import tqdm
 
+def get_works(ids: list, email: str, 
+        select_fields: str = (
+        "id,doi,title,authorships,publication_year,publication_date,ids,"
+        "primary_location,type,open_access,has_fulltext,cited_by_count,"
+        "biblio,primary_topic,topics,keywords,concepts,mesh,"
+        "best_oa_location,referenced_works,related_works,cited_by_api_url,"     
+        "counts_by_year,updated_date,created_date"
+        ),
+        pdf_output_dir: str = None, persist_dir: str = None, 
+        entry_type: str = "primary entry", enable_selenium: bool = False, 
+        selenium_mode: str = "headless", show_progress: bool = False, 
+        verbose: bool = False) -> tuple[list, list]:
+    """Get information about works from OpenAlex API.
 
-def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: str = None, entry_type: str = "primary entry", enable_selenium: bool = False, is_headless: bool = True, show_progress: bool = False, verbose: bool = False) -> tuple[list, list]:
-    """
-    Get information about works from OpenAlex API. Works are scholarly documents like journal articles, books, datasets, and theses.
-    
+    Works are scholarly documents like journal articles, books, datasets, and
+    theses.
+
     Args:
-        ids (list): List of IDs of works to get information about. Accepts Pubmed IDs (PMID), PubMed Central ID (PMCID), DOI, and OpenAlex IDs.
+        ids (list): List of IDs of works to get information about. Accepts
+            Pubmed IDs (PMID), PubMed Central ID (PMCID), DOI, and OpenAlex IDs.
         email (str): Email address to use in the API request.
-        pdf_output_dir (str, optional): Directory to save the PDFs if available. Defaults to None.
-        persist_dir (str, optional): Directory to save the JSON response for each work. Defaults to None.
-        entry_type (str, optional): Type of entry to retrieve. Options are 'primary entry', 'reference of primary entry', 'citing primary entry', and 'related to primary entry'. Defaults to 'primary entry'.
-        enable_selenium (bool, optional): If True, enables the use of Selenium for downloading PDFs. Defaults to False. Install the Chrome browser and the Chrome WebDriver to use this option.
+        select_fields (str, optional): Comma-separated list of fields to
+            retrieve. Allows root-level fields to be specified.
+            See https://docs.openalex.org/api-entities/works/filter-works for details.
+        pdf_output_dir (str, optional): Directory to save the PDFs if available.
+            Defaults to None.
+        persist_dir (str, optional): Directory to save the JSON response for
+            each work. Defaults to None.
+        entry_type (str, optional): Type of entry to retrieve. Options are
+            'primary entry', 'reference of primary entry',
+            'citing primary entry', and 'related to primary entry'.
+            Defaults to 'primary entry'.
+        enable_selenium (bool, optional): If True, enables the use of Selenium
+            for downloading PDFs. Defaults to False. Install the Chrome browser
+            and the Chrome WebDriver to use this option.
             Note: Enabling Selenium can add a delay.
-            This option is only used for open access works that cannot be downloaded using the requests library. 
-        is_headless (bool, optional): If True, runs the browser in headless mode (i.e, without any visible UI). Defaults to True.
-        show_progress (bool, optional): If True, displays a progress bar. Defaults to False.
-        verbose (bool, optional): If True, prints detailed status messages. Defaults to False. Disabled if show_progress is True.
-        
+            This option is only used for open access works that cannot be
+            downloaded using the requests library.
+        selenium_mode (str, optional): The mode to run Selenium in when it is
+            enabled. Options are "headless" or "standard". Defaults to
+            "headless".
+            Note: Headless mode uses a headless browser (running in the
+            background). In standard mode the browser window is visible
+            during download. This can be useful for debugging and is required
+            for some websites.
+        show_progress (bool, optional): If True, displays a progress bar.
+            Defaults to False.
+        verbose (bool, optional): If True, prints detailed status messages.
+            Defaults to False. Disabled if show_progress is True.
+
     Returns:
         tuple: A tuple containing two lists:
-            - works (list): List of dictionaries containing information about the works.
-            - failed_calls (list): List of dictionaries containing information about failed API calls.
-            
-    Note:
-        To use Selenium options, install the Chrome browser and the Chrome WebDriver.
-    """
+            - works (list): List of dictionaries containing information about
+              the works.
+            - failed_calls (list): List of dictionaries containing information
+              about failed API calls.
 
-    
+    Note:
+        To use Selenium options, install the Chrome browser and the Chrome
+        WebDriver.
+
+    Example:
+        works, failed_calls = get_works(
+            ids=["38857748", "10.1186/s12967-023-04576-8", "https://openalex.org/W1997963236"],
+            email=os.environ.get("EMAIL"),
+            show_progress=True
+        )
+    """
+   
     # Input validation
     assert email, "Please provide your Email to use OpenAlex API."
     assert ids, "Please provide a list of IDs to retrieve data."
     assert isinstance(ids, list), "IDs must be provided as a list."
-    assert entry_type in ["primary entry", "reference of primary entry", "citing primary entry", "related to primary entry"], "Invalid entry_type. Options are 'primary entry', 'reference of primary entry', 'citing primary entry', and 'related to primary entry'."
+    assert entry_type in [
+        "primary entry",
+        "reference of primary entry",
+        "citing primary entry",
+        "related to primary entry"
+    ], (
+        "Invalid entry_type. Options are 'primary entry', "
+        "'reference of primary entry', 'citing primary entry', "
+        "and 'related to primary entry'."
+    )
     assert verbose in [True, False], "Verbose must be a boolean value."
-    assert isinstance(pdf_output_dir, str) or pdf_output_dir is None, "pdf_output_dir must be a string or None."
-    assert isinstance(persist_dir, str) or persist_dir is None, "persist_dir must be a string or None."
+    assert isinstance(pdf_output_dir, str) or pdf_output_dir is None, (
+        "pdf_output_dir must be a string or None."
+    )
+    assert isinstance(persist_dir, str) or persist_dir is None, (
+        "persist_dir must be a string or None."
+    )
+    assert isinstance(enable_selenium, bool), "enable_selenium must be a boolean value."
+    assert selenium_mode in ["headless", "standard"], (
+        "selenium_mode must be 'headless' or 'standard'."
+    )
+    assert isinstance(show_progress, bool), "show_progress must be a boolean value."
     
+    # Display a notice if a PDF output directory is provided.
     if pdf_output_dir:
-        warning_message = "WARNING: Downloading PDFs may be subject to copyright restrictions. Ensure you have the right to download and use the content."
-        print(warning_message)
+        print(
+            f"NOTICE: Downloading PDFs may be subject to copyright restrictions. "
+            f"Ensure you have the right to download and use the content.\n"
+            )
 
     # Initialize variables used for the API request and function
     base_url = "https://api.openalex.org/works/"
     params = {
         "mailto": email,
-        "select": "id,doi,title,authorships,publication_year,publication_date,ids,language,primary_location,type,open_access,has_fulltext,cited_by_count,cited_by_percentile_year,biblio,primary_topic,topics,keywords,concepts,mesh,best_oa_location,sustainable_development_goals,referenced_works,related_works,ngrams_url,cited_by_api_url,counts_by_year,updated_date,created_date", # Add or remove fields as needed 
+        "select": select_fields,
     }
-    # select option in params allows root-level fields to be specified. The following root-level fields are available:
-        # id
-        # doi
-        # title
-        # authorships
-        # publication_year
-        # publication_date
-        # ids
-        # language
-        # primary_location
-        # type
-        # type_crossref
-        # open_access
-        # has_fulltext
-        # cited_by_count
-        # cited_by_percentile_year
-        # biblio
-        # primary_topic
-        # topics
-        # keywords
-        # concepts
-        # mesh
-        # best_oa_location
-        # sustainable_development_goals
-        # referenced_works
-        # related_works
-        # ngrams_url
-        # cited_by_api_url
-        # counts_by_year
-        # updated_date
-        # created_date
-        # see https://docs.openalex.org/api-entities/works/filter-works for more details
+        
     works = []
     failed_calls = []
-    doi_regex = r"10.\d{1,9}/[-._;()/:A-Za-z0-9]+" # Regular expression to match DOIs
+    doi_regex = r"10.\d{1,9}/[-._;()/:A-Za-z0-9]+" 
     todays_date = datetime.now().date()
-    now = datetime.now() # Get the current date and time.
+    now = datetime.now()
     iter_count = 0
 
     # Display a progress bar if show_progress is True
     if show_progress:
-        iterable = tqdm(ids, desc="Retrieving works") # Wrap the list of IDs with tqdm to display a progress bar.
-        verbose = False # Disable verbose mode if show_progress is True.
+        iterable = tqdm(ids, desc="Retrieving works")
+        verbose = False
     else:
         iterable = ids
 
@@ -117,14 +148,14 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
             id = id.split("/")[-1]
         if id.startswith("https://doi.org/"):
             id = id.replace("https://doi.org/", "")
-        
-        # Print the ID for the current iteration if verbose is True.
+
         if verbose: print("---")
 
-        # If a persist_dir is provided, check if a JSON file already exists for the work. If so, load the data from the file if it is not older than 30 days.
+        # If a persist_dir is provided, check if a JSON file already exists for the work. 
+        # If so, load the data from the file if it is not older than 30 days.
         if persist_dir:
-            was_resently_persisted = False # Initialize a flag to check if the data was recently persisted.
-            works_from_storage = load_works_from_storage(persist_dir) # Load the JSON files for works from the specified directory.
+            was_resently_persisted = False # Flag to indicate if the data was recently persisted.
+            works_from_storage = load_works_from_storage(persist_dir, verbose=verbose)
             for _work in works_from_storage:
                 _uid = _work["uid"]
                 _doi = _work["metadata"]["ids"]["doi"] if "doi" in _work["metadata"]["ids"] else None
@@ -139,21 +170,23 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
                         break # Exit the for loop if a match was found.
                     else:
                         if verbose: print(f"Data for UID {id} exists in cache but is older than 30 days. Retrieving updated data...")
-                        status_message += _work["status_messages"] # Prepend the status messages from the persisted data.
+                        status_message += _work["status_messages"]
                         status_message += f"{todays_date}: Data for UID {id} exists in {persist_dir} but is older than 30 days. Retrieving updated data. "
             if was_resently_persisted:
                 continue # Skip to the next iteration if the data was recently persisted.
-                # TODO: This may require revision. If the metadata were persisted, the PDF file may not have been saved. This should be checked and handled.
+                # TODO: This may require revision. 
+                # If the metadata were persisted, the PDF file may not have been saved.
 
-        # The following block of code is used to handle the API rate limit. The OpenAlex API has a rate limit of 10 requests per second.
+        # The following block of code is used to handle the API rate limit. 
+        # The OpenAlex API has a rate limit of 10 requests per second.
         if iter_count > 9:
-            time_delta = datetime.now() - now # Calculate the time taken for 10 requests. Sleep if the time taken is less than 1 second. Rate limit is 10 requests per second.
-            if time_delta < timedelta(seconds=1):  # Compare with timedelta object of 1 second.
-                remaining_time = 1 - time_delta.total_seconds() # Calculate the remaining time to sleep.
+            time_delta = datetime.now() - now 
+            if time_delta < timedelta(seconds=1): 
+                remaining_time = 1 - time_delta.total_seconds()
                 if verbose: print(f"Number of requests reached 10. Sleeping for {round(remaining_time, 3)} seconds...")
-                time.sleep(remaining_time) # Sleep for the remaining time.
-                iter_count = 0 # Reset the counter after sleeping.
-                now = datetime.now() # Reset the time after sleeping.
+                time.sleep(remaining_time)
+                iter_count = 0
+                now = datetime.now()
 
         # Construct the URL for the API call based on the ID type.
         if re.match(doi_regex, id):
@@ -169,7 +202,7 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
             failed_calls.append({"uid": id, "error": "Invalid ID"})
             continue # Skip to the next iteration if the ID is invalid.
 
-        # Retrieve data for the work (e.g., journal article, book, dataset, and theses) using the OpenAlex API.
+        # Retrieve data for the work from the API.
         try: 
             response = requests.get(url, params=params)    
         except requests.RequestException as e:
@@ -178,9 +211,24 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
             continue # Skip to the next iteration if an error occurs while making the API call.
 
         # Handle unsuccessful API calls.    
-        if response.status_code != 200: 
-            if verbose: print(f"API call for work with UID {id} was not successful. Status code: {response.status_code}")
-            failed_calls.append({"uid": id, "error": f"API call not successful. Status code: {response.status_code}"})
+        if response.status_code != 200:
+            try:
+                response_data = json.loads(response.text)
+                error = response_data.get("error")
+                error_msg = response_data.get("message")
+                failed_calls.append({
+                    "uid": id,
+                    "status_code": response.status_code,
+                    "error": error,
+                    "message": error_msg
+                })
+            except json.JSONDecodeError:
+                failed_calls.append({
+                    "uid": id,
+                    "status_code": response.status_code,
+                    "error": "JSONDecodeError"
+                })
+            if verbose: print(f"API call for UID {id} not successful. Status code: {response.status_code} See failed_calls for details.")
             continue # Skip to the next iteration if the API call was unsuccessful.
 
         # Continue if the API call was successful.
@@ -195,21 +243,25 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
                 status_message += f"{todays_date}: Output directory for PDF files not provided. Skipped download. "
             else:
                 try:
-                    message, pdf_path = download_pdf(data, pdf_output_dir, email=email, enable_selenium=enable_selenium, is_headless=is_headless, verbose=verbose) # Download the PDF file of the article if a directory path is provided and if it is openly accessable; update the status message.
+                    message, pdf_path = download_pdf(data, pdf_output_dir, email=email, 
+                                                    enable_selenium=enable_selenium, 
+                                                    selenium_mode=selenium_mode, verbose=verbose)
                     status_message += message
 
                 except Exception as e:
-                    # TODO: fix a bug: An error occurred while attempting to download the PDF for work with UID 10.1126/sciimmunol.aau8714: cannot access local variable 'filename' where it is not associated with a value. Make sure the download_pdf function is imported from the openalex_api_utils module and is working correctly.
-                    # This is only raised for works with UID 10.1126/sciimmunol.aau8714 and UID 30143481
-                    print(f"An error occurred while attempting to download the PDF for work with UID {id}: {e}. Make sure the download_pdf function is imported from the openalex_api_utils module and is working correctly.")
+                    print(
+                        f"An error occurred while attempting to download the PDF for work "
+                        f"with UID {id}: {e}. Make sure the download_pdf function is imported "
+                        f"from the openalex_api_utils module and is working correctly."
+                    )
 
             work = {
-                    "uid": id, # Unique identifier of the work; can be a DOI, PMID, PMCID, or OpenAlex ID.
-                    "entry_types": [entry_type], # Type of entry retrieved (e.g., primary entry, reference of primary entry, citing primary entry, related to primary entry). List of strings to allow multiple types.
-                    "metadata": data, # Metadata of the work retrieved from the API.
-                    "pdf_path": pdf_path, # Path to the PDF file if available. Is None if the PDF was not downloaded.
-                    "status_messages": status_message, # Status messages for the work.
-                    "persist_datetime": persist_datetime, # Datetime when the data was saved to the cache.
+                    "uid": id,
+                    "entry_types": [entry_type], 
+                    "metadata": data,
+                    "pdf_path": pdf_path,
+                    "status_messages": status_message,
+                    "persist_datetime": persist_datetime,
                 }
 
             # Save the JSON response for the work if a directory path is provided for persistence.
@@ -229,32 +281,32 @@ def get_works(ids: list, email: str, pdf_output_dir: str = None, persist_dir: st
 
     return works, failed_calls
 
-## Example usage:
-# uids = ['38860170', '38857748','https://openalex.org/W1997963236','10.1186/s12967-023-04576-8']
-# email = os.environ.get("EMAIL")
-# Retrieve works without saving PDFs or cache
-# works, failed_calls = get_works(uids, email=email, show_progress=True)
-# Retrieve works and save PDFs, cache the JSON responses
-# works, failed calls = get_works(uids, email=email, pdf_output_dir="./pdfs", persist_dir="./cache", show_progress=True)
-
-
-
 import os
 import requests
 from datetime import datetime
 
-def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: bool = False, is_headless: bool = True, verbose: bool = False) -> tuple[str, str]:
-    """
-    Download a single PDF file from a URL and save it to the specified directory.
+def download_pdf(data: dict, pdf_output_dir: str, email: str, 
+        enable_selenium: bool = False, selenium_mode: str = "headless", 
+        verbose: bool = False) -> tuple[str, str]:
+    """Download a single PDF file from a URL and save it to the specified directory.
 
     Args:
-        data (dict): Dictionary containing information about a single work, obtained from the OpenAlex API. It should contain the 'best_oa_location' key with the 'pdf_url' value.
+        data (dict): Dictionary containing information about a single work, 
+            obtained from the OpenAlex API. It should contain the 'best_oa_location' key 
+            with the 'pdf_url' value.
         pdf_output_dir (str): Directory to save the PDFs.
         email (str): Email address to use in the request.
-        enable_selenium (bool, optional): If True, enables the use of Selenium for downloading PDFs. Defaults to False. Install the Chrome browser and the Chrome WebDriver to use this option.
+        enable_selenium (bool, optional): If True, enables the use of Selenium 
+            for downloading PDFs. Defaults to False. Install the Chrome browser and 
+            the Chrome WebDriver to use this option.
             Note: Enabling Selenium can add a delay.
-            This option is only used for open access works that cannot be downloaded using the requests library. 
-        is_headless (bool, optional): If True, runs the browser in headless mode (i.e, without any visible UI). Defaults to True.
+            This option is only used for open access works 
+            that cannot be downloaded using the requests library. 
+        selenium_mode (str, optional): The mode to run Selenium in when it is enabled. 
+            Options are "headless" or "standard". Defaults to "headless".
+            Note: Headless mode uses a headless browser (running in the background). 
+            In standard mode the browser window is visible during download. 
+            This can be useful for debugging and is required for some websites.
         verbose (bool): If True, prints detailed status messages. Default is False.
 
     Returns:
@@ -276,7 +328,8 @@ def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: b
     if not os.path.exists(pdf_output_dir):
         os.makedirs(pdf_output_dir)
 
-    # Extract the OpenAlex ID, PMID and DOI from the data dictionary. This is used to generate a unique filename for the PDF file to be saved.
+    # Extract the OpenAlex ID, PMID and DOI from the data dictionary. 
+    # This is used to generate a unique filename for the PDF file to be saved.
     oaid = data['id'].split('/')[-1]
     try:
         pmid = data['ids'].get('pmid', '?').split('/')[-1]
@@ -296,8 +349,14 @@ def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: b
     # Check if the work is open access and has a PDF URL.
     if 'best_oa_location' not in data or not data['best_oa_location'] or not data['best_oa_location'].get('is_oa', False):
         if verbose:
-            print(f"Work with UID {data['id']} is not open access or 'best_oa_location' key not found. Skipping download of PDF...")
-        status_message += f"{todays_date}: Work with UID {data['id']} is not open access or 'best_oa_location' key not found. Skipped PDF download. "
+            print(
+                f"Work with UID {data['id']} is not open access or 'best_oa_location' key not found. "
+                f"Skipping download of PDF..."
+                )
+        status_message += (
+            f"{todays_date}: Work with UID {data['id']} is not open access or 'best_oa_location' key not found. "
+            f"Skipped PDF download. "
+            )
         return status_message, None
 
     if verbose:
@@ -345,10 +404,18 @@ def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: b
             return status_message, None
 
     if pdf_response.status_code == 403:
+        # Extract error message from the response.
+        try:
+            error = pdf_response.json().get("error")
+            error_msg = pdf_response.json().get("message")
+        except Exception as e:
+            error = "No error returned."
+            error_msg = "No message found."
+
         if not enable_selenium:
             if verbose:
-                print(f"Failed to download from {pdf_url}. Status code: {pdf_response.status_code}. Selenium disabled.")
-            status_message += f"{todays_date}: Failed to download PDF from {pdf_url}. Status code: {pdf_response.status_code}. Selenium disabled. "
+                print(f"Failed to download from {pdf_url}. Status code: {pdf_response.status_code}. Selenium disabled. Response message: {error}, {error_msg}")
+            status_message += f"{todays_date}: Failed to download PDF from {pdf_url}. Status code: {pdf_response.status_code}. Selenium disabled. Response message: {error}, {error_msg}. "
             return status_message, None
         else:
             if verbose:
@@ -362,7 +429,9 @@ def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: b
                 if verbose:
                     print(f"Trying to download PDF from {pmc_url}...")
                 try:
-                    _status_message, pdf_filepath = download_pdf_with_selenium(pmc_url, pdf_filepath, is_headless=is_headless, verbose=verbose)  # Call the function with the url to PubMed Central
+                    _status_message, pdf_filepath = download_pdf_with_selenium(pmc_url, pdf_filepath, 
+                                                                               selenium_mode=selenium_mode, 
+                                                                               verbose=verbose)  # Call the function with the url to PubMed Central
                     if pdf_filepath:
                         status_message += _status_message
                         return status_message, pdf_filepath
@@ -377,7 +446,9 @@ def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: b
             if verbose:
                 print(f"Trying to download PDF from {pdf_url} using Selenium...")
             try:
-                _status_message, pdf_filepath = download_pdf_with_selenium(pdf_url, pdf_filepath, is_headless=is_headless, verbose=verbose)  # Call the function with the url to the best_oa_location (journal website)
+                _status_message, pdf_filepath = download_pdf_with_selenium(pdf_url, pdf_filepath, 
+                                                                           selenium_mode=selenium_mode, 
+                                                                           verbose=verbose)  # Call the function with the url to the best_oa_location (journal website)
                 if pdf_filepath:
                     status_message += _status_message
                     return status_message, pdf_filepath
@@ -400,8 +471,6 @@ def download_pdf(data: dict, pdf_output_dir: str, email: str, enable_selenium: b
 # Example usage
 # status_message, pdf_filepath = download_pdf(data, pdf_output_dir, email, verbose)
 
-
-
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -411,21 +480,37 @@ import time
 import os
 import shutil
 
-def download_pdf_with_selenium(pdf_url: str, pdf_filepath: str, is_headless: bool = True, verbose: bool = False) -> tuple[str, str | None]:
-    """Downloads a PDF from a given URL using Selenium WebDriver with Chrome.
+def download_pdf_with_selenium(pdf_url: str, pdf_filepath: 
+        str, selenium_mode: str = "headless", 
+        verbose: bool = False) -> tuple[str, str | None]:
+    """Downloads a PDF from a given URL using Selenium.
 
-    The function checks for directory and URL validity, uses the Selenium WebDriver with Chrome to open the URL,
-    and downloads the PDF, and saves it to the specified directory. The browser can run
-    either in headless mode (unattended environment without any visible UI) or in standard mode (with a visible UI), 
+    The function checks for directory and URL validity, sets up a Chrome WebDriver
+    in either headless or standard mode, downloads the PDF, 
+    and saves it to the specified directory.
 
     Args:
         pdf_url (str): The URL of the PDF to download.
         pdf_filepath (str): The path to save the downloaded PDF.
-        is_headless (bool): If True, the browser runs in headless mode (no visible UI). 
+        selenium_mode (str): The mode to run Selenium in. 
+            Options are "headless" or "standard". Default is "headless".
         verbose (bool): If True, print messages about the download process.
 
     Returns:
         tuple[str, str | None]: A tuple containing the status message and the file path of the downloaded PDF.
+
+    Raises:
+        ValueError: If the URL is invalid or the selenium_mode is invalid.
+
+    Example (headless mode):
+        pdf_url1 = "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6341984/pdf/"
+        pdf_filepath1 = "./pdfs/PMC6341984.pdf"
+        status_message, pdf_filepath = download_pdf_with_selenium(pdf_url1, pdf_filepath1, selenium_mode="headless", verbose=True)
+
+    Example (standard mode):
+        pdf_url2 = "http://www.cell.com/article/S0092867422015811/pdf"
+        pdf_filepath2 = "./pdfs/PMC9907019.pdf"
+        status_message, pdf_filepath = download_pdf_with_selenium(pdf_url2, pdf_filepath2, selenium_mode="standard", verbose=True)
     """
 
     # Initialize variables
@@ -434,18 +519,11 @@ def download_pdf_with_selenium(pdf_url: str, pdf_filepath: str, is_headless: boo
     todays_date = datetime.now().date()
 
     # Input validation
-    if not isinstance(pdf_url, str):
-        raise ValueError("pdf_url must be a string.")
     if not pdf_url.startswith("http"):
         raise ValueError("Invalid URL")
-    if not isinstance(pdf_filepath, str):
-        raise ValueError("pdf_filepath must be a string.")
-    if not pdf_filepath.endswith('.pdf'):
-        raise ValueError("pdf_filepath must end with '.pdf'")
-    if not isinstance(is_headless, bool):
-        raise ValueError("is_headless must be a boolean value.")
-    if not isinstance(verbose, bool):
-        raise ValueError("verbose must be a boolean value.")
+    
+    if selenium_mode not in ["headless", "standard"]:
+        raise ValueError("Invalid selenium_mode. Choose 'headless' or 'standard'.")
     
     # Extract directory from file path
     pdf_output_dir = os.path.abspath(os.path.dirname(pdf_filepath))
@@ -457,7 +535,7 @@ def download_pdf_with_selenium(pdf_url: str, pdf_filepath: str, is_headless: boo
 
     # Configure Chrome options
     options = Options()
-    if is_headless:
+    if selenium_mode == "headless":
         options.add_argument('--headless')
     options.add_argument('--disable-gpu')
     options.add_argument('--no-sandbox')
@@ -523,32 +601,20 @@ def download_pdf_with_selenium(pdf_url: str, pdf_filepath: str, is_headless: boo
                 print(f"PDF downloaded successfully and saved as {new_filepath}.")
             return status_message, new_filepath
         else:
-            status_message = f"{todays_date}: PDF download from {pdf_url} using Selenium with headless mode set to {is_headless} failed. "
+            status_message = f"{todays_date}: PDF download from {pdf_url} using Selenium in {selenium_mode} mode failed."
             if verbose:
-                print(f"PDF download from {pdf_url} using Selenium with headless mode set to {is_headless} failed.")
+                print(f"PDF download from {pdf_url} using Selenium in {selenium_mode} mode failed.")
             return status_message, None
 
     except Exception as e:
-        status_message = f"{todays_date}: An error occurred while attempting to download PDF from {pdf_url} using Selenium with headless mode set to {is_headless}: {e} "
+        status_message = f"{todays_date}: An error occurred while attempting to download PDF from {pdf_url} using Selenium in {selenium_mode} mode: {e} "
         if verbose:
-            print(f"An error occurred while attempting to download PDF from {pdf_url} using Selenium with headless mode set to {is_headless}: {e}")
+            print(f"An error occurred while attempting to download PDF from {pdf_url} using Selenium in {selenium_mode} mode: {e}")
         return status_message, None
 
     finally:
         # Close the browser
         driver.quit()
-    
-# Example usage:
-# in headless mode
-# pdf_url1 = "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6341984/pdf/"
-# pdf_filepath1 = "./pdfs/PMC6341984.pdf"
-# status_message, pdf_filepath = download_pdf_with_selenium(pdf_url1, pdf_filepath1, is_headless=True, verbose=True)
-# or with visible UI
-# pdf_url2 = "http://www.cell.com/article/S0092867422015811/pdf"
-# pdf_filepath2 = "./pdfs/PMC9907019.pdf"
-# status_message, pdf_filepath = download_pdf_with_selenium(pdf_url2, pdf_filepath2, is_headless=False, verbose=True)
-
-
 
 def persist_data_to_disk(work: dict, persist_dir: str) -> bool:
     """
@@ -560,7 +626,11 @@ def persist_data_to_disk(work: dict, persist_dir: str) -> bool:
 
     Returns:
         bool: True if the data was successfully saved, False otherwise.
+
+    Example:
+        status = persist_data_to_disk(work, persist_dir)
     """
+
     # Initialize variables.
     persist_datetime = None
     status = False
@@ -569,7 +639,8 @@ def persist_data_to_disk(work: dict, persist_dir: str) -> bool:
     if not os.path.exists(persist_dir): 
         os.makedirs(persist_dir)
 
-    # Extract the OpenAlex ID, PMID and DOI from the metadata. This is used to generate unique filenames for the JSON files.
+    # Extract the OpenAlex ID, PMID and DOI from the metadata. 
+    # This is used to generate unique filenames for the JSON files.
     oaid = work['metadata']['id'].split('/')[-1] 
     try:
         pmid = work['metadata']['ids'].get('pmid', '?').split('/')[-1] # Extract the PMID from the metadata. The try-except block is used to handle cases where the 'ids' key is not present.
@@ -600,12 +671,8 @@ def persist_data_to_disk(work: dict, persist_dir: str) -> bool:
     
     return status
 
-# Example usage
-# status = persist_data_to_disk(work, persist_dir)
 
-
-
-def load_works_from_storage(persist_dir: str) -> List[Dict[str, Any]]:
+def load_works_from_storage(persist_dir: str, verbose = False) -> List[Dict[str, Any]]:
     """
     Load the JSON responses for works from the specified directory.
 
@@ -614,6 +681,9 @@ def load_works_from_storage(persist_dir: str) -> List[Dict[str, Any]]:
 
     Returns:
         List[Dict[str, Any]]: List of dictionaries containing information about the works.
+
+    Example:
+        works_from_storage = load_works_from_storage(persist_dir)
     """
     # Initialize the list of works.
     works = []
@@ -628,7 +698,7 @@ def load_works_from_storage(persist_dir: str) -> List[Dict[str, Any]]:
 
         # Check if there are any files in the directory.
         if not files:
-            print(f"No files found in {persist_dir}.")
+            if verbose: print(f"No files found in {persist_dir}.")
             return works
 
         # Iterate over the files in the directory.
@@ -640,20 +710,18 @@ def load_works_from_storage(persist_dir: str) -> List[Dict[str, Any]]:
 
         # Ensure that works have the required fields, such as 'persist_datetime', 'uid', and 'metadata', otherwise remove them from the list.
         works = [work for work in works if "persist_datetime" in work and "uid" in work and "metadata" in work]
-
+        if verbose: print(f"Loaded {len(works)} works from {persist_dir}.")
     return works
-
-## Example usage:
-# works_from_storage = load_works_from_storage(persist_dir)
-
-
 
 # import requests
 # from tqdm import tqdm
 # from datetime import datetime
 # from typing import List, Dict, Any, Optional
 
-def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, pdf_output_dir: Optional[str] = None, persist_dir: Optional[str] = None, enable_selenium: bool = False, is_headless: bool = True, show_progress: bool = False, verbose: bool = False) -> List[Dict[str, Any]]:
+def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, 
+        pdf_output_dir: Optional[str] = None, persist_dir: Optional[str] = None, 
+        enable_selenium: bool = False, selenium_mode: str = "headless", 
+        show_progress: bool = False, verbose: bool = False) -> List[Dict[str, Any]]:
     """
     Retrieve works that cite the given works.
 
@@ -664,12 +732,14 @@ def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, 
     pdf_output_dir (Optional[str]): Directory to save PDFs (default is None).
     persist_dir (Optional[str]): Directory to persist data (default is None).
     enable_selenium (bool): If True, use Selenium for downloading PDFs (default is False).
-    is_headless (bool): If True, run the browser in headless mode (i.e., without any visible UI) (default is True).
     show_progress (bool): If True, show progress (default is False).
     verbose (bool): If True, print progress statements (default is False).
 
     Returns:
     List[Dict[str, Any]]: List of works that cite the given works.
+
+    Example:
+    works = get_citations(works, email=os.environ.get("EMAIL"), show_progress=True)
     """
 
     # Input validation
@@ -681,9 +751,11 @@ def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, 
     assert isinstance(verbose, bool), "verbose must be a boolean value."
 
     if pdf_output_dir:
-        warning_message = "WARNING: Downloading PDFs may be subject to copyright restrictions. Ensure you have the right to download and use the content."
-        print(warning_message)
-        
+            print(
+                f"NOTICE: Downloading PDFs may be subject to copyright restrictions. "
+                f"Ensure you have the right to download and use the content.\n"
+                )
+
     # Initialize variables
     citations = []  # List to store the works that cite the retrieved works.
     citations_metadata = []  # List to store the metadata of the cited by works.
@@ -733,38 +805,37 @@ def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, 
             "uid": data['id'],
             "metadata": data,
             "entry_types": ["citing primary entry"],
-            "pdf_path": None,
-            "status_messages": "",
-            "persist_datetime": None,
+
         }
         citations.append(work)
 
     if pdf_output_dir:
         if show_progress:
-            iterable2 = tqdm(citations, desc="Retrieving PDFs")
-        else:
-            iterable2 = citations
-        for work in iterable2:
+            citations = tqdm(citations, desc="Retrieving PDFs")
+        for work in citations:
             if not 'best_oa_location' in work['metadata'] or not work['metadata']['best_oa_location'] or not work['metadata']['best_oa_location'].get('is_oa', False):
                 if verbose: print(f"Work with UID {work['uid']} is not open access. Skipping download of PDF...")
                 work["pdf_path"] = None
                 work["status_messages"] = f"{todays_date}:Work is not open access. Skipped PDF download;"
             else:
                 try:
-                    message, pdf_path = download_pdf(work['metadata'], pdf_output_dir, email=email, enable_selenium=enable_selenium, is_headless=is_headless, verbose=verbose)
+                    message, pdf_path = download_pdf(work['metadata'], pdf_output_dir, 
+                                                     email=email, enable_selenium=enable_selenium, 
+                                                     selenium_mode=selenium_mode, verbose=verbose)
                     work["pdf_path"] = pdf_path
                     work["status_messages"] = message
                 except Exception as e:
-                    print(f"An error occurred while attempting to download the PDF for work with UID {work['uid']}: {e}. Make sure the download_pdf function is imported from the openalex_api_utils module and is working correctly.")
+                    print(
+                        f"An error occurred while attempting to download the PDF for work with UID {work['uid']}: {e}. "
+                        f"Make sure the download_pdf function is imported from the openalex_api_utils module and is working correctly. "
+                    )
                     work["pdf_path"] = None
                     work["status_messages"] = f"{todays_date}:Error during PDF download: {e};"
     
     if persist_dir:
         if show_progress:
-            iterable2 = tqdm(citations, desc="Persisting data")
-        else:
-            iterable2 = citations
-        for work in iterable2:
+            citations = tqdm(citations, desc="Persisting data")
+        for work in citations:
             status = persist_data_to_disk(work, persist_dir)
             if verbose:
                 if status:
@@ -779,11 +850,6 @@ def get_citations(works: List[Dict[str, Any]], email: str, per_page: int = 200, 
 
     return citations
 
-# Example usage:
-# citations = get_citations(works, email=EMAIL, per_page=200, enable_selenium=True, show_progress=True)
-
-
-
 # from typing import List, Dict, Any
 from IPython.display import display, HTML
 
@@ -796,6 +862,9 @@ def list_works(works: List[Dict[str, Any]]) -> None:
 
     Returns:
         None
+
+    Example:
+        list_works(works)
     """
     for work in works:
         # Extract relevant information about the work.
@@ -836,26 +905,24 @@ def list_works(works: List[Dict[str, Any]]) -> None:
         display(
             HTML(f"{first_author_last_name} <i>et al.</i> <b>{title}.</b> {journal} {publication_year}"),
             HTML(f"<a href='{cited_by_ui_url}' >Cited by</a>: {cited_by_count} | References: {len(work['metadata']['referenced_works'])} | Related works: {len(work['metadata']['related_works'])}"), 
-            # HTML(f"Primary topic: {primary_topic} (Score: {primary_topic_score})"),
+            HTML(f"Primary topic: {primary_topic} (Score: {primary_topic_score})"),
             HTML(f"{pdf_link} &nbsp; {full_text_link} &nbsp; {open_lock if is_oa else closed_lock} &nbsp; {full_text if has_fulltext else no_full_text}"),
             HTML("<hr>")
         )
-
-## Example usage:
-# display_works(works)
-
-
-
 
 def get_open_access_ids(works: List[Dict[str, Any]]) -> List[int]:
     """
     Filter the list of works to return the works that are open access.
 
-    Parameters:
-    works (list): List of works to count the number of open access works. Each work is a dictionary containing metadata.
+    Args:
+        works (list): List of works to count the number of open access works. 
+            Each work is a dictionary containing metadata.
 
     Returns:
-    open_access_ids (list): List of IDs of works that are open access.
+        open_access_ids (list): List of IDs of works that are open access.
+
+    Example:
+        open_access_ids = get_open_access_ids(works)
     """
     # Input validation.
     assert all(isinstance(work, dict) for work in works), "Works must be a list of dictionaries."
@@ -867,11 +934,6 @@ def get_open_access_ids(works: List[Dict[str, Any]]) -> List[int]:
     open_access_ids = [work['metadata']['id'] for work in works if work['metadata']['open_access']['is_oa']]
     return open_access_ids
 
-## Example usage:
-# open_access_ids = get_open_access_ids(works)
-
-
-
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -880,10 +942,14 @@ def plot_open_access_stats(works_dict: dict) -> None:
     Plot the distribution of open access and non-open access statistics as pie charts in subplots.
 
     Args:
-    works_dict: Dictionary containing the subplot titles and the works data.
+        works_dict: Dictionary containing the subplot titles and the works data.
 
     Returns:
-    None
+        None
+
+    Example:
+        works_dict = {"Primary Works": works, "References": references, "Related Works": related_works, "Citations": citations}
+        plot_open_access_stats(works_dict)
     """
     # Create subplots.
     fig = make_subplots(rows=2, cols=2, subplot_titles=list(works_dict.keys()),
@@ -904,7 +970,3 @@ def plot_open_access_stats(works_dict: dict) -> None:
 
     # Show plot.
     fig.show()
-   
-## Example usage:
-# works_dict = {"Primary Works": works, "References": references, "Related Works": related_works, "Citations": citations}
-# plot_open_access_stats(works_dict)
