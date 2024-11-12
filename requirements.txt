@@ -4,3 +4,4 @@ selenium>=4.23.1,<5.0.0
 webdriver-manager>=3.4.2,<4.0.0
 nbformat>=5.10.4,<6.0.0
 plotly>=5.23.0,<6.0.0
+scholaris
