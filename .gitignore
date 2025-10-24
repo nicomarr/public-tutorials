@@ -24,3 +24,6 @@ venv.bak/
 
 # R files
 .Rhistory
+
+# Conversation history files
+.specstory/
